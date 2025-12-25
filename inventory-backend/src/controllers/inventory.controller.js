@@ -1,13 +1,19 @@
 import Product from "../models/Product.js";
 import StockMovement from "../models/StockMovement.js";
 import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Get all products
-export const getInventory = async (req, res) => {
+export const getProducts = async (req, res) => {
   try {
     const products = await Product.find().sort({ createdAt: -1 });
     res.json(products);
   } catch (error) {
+    console.error("Get products error:", error);
     res.status(500).json({ error: error.message });
   }
 };
@@ -21,17 +27,31 @@ export const getProduct = async (req, res) => {
     }
     res.json(product);
   } catch (error) {
+    console.error("Get product error:", error);
     res.status(500).json({ error: error.message });
   }
 };
 
-// Add new product
-export const addProduct = async (req, res) => {
+// Create product
+export const createProduct = async (req, res) => {
   try {
     const product = new Product(req.body);
     await product.save();
-    res.json(product);
+
+    // Create initial stock movement if quantity > 0
+    if (product.quantity > 0) {
+      const movement = new StockMovement({
+        product: product._id,
+        type: "IN",
+        quantity: product.quantity,
+        note: "Initial stock",
+      });
+      await movement.save();
+    }
+
+    res.status(201).json(product);
   } catch (error) {
+    console.error("Create product error:", error);
     res.status(400).json({ error: error.message });
   }
 };
@@ -41,16 +61,17 @@ export const updateProduct = async (req, res) => {
   try {
     const product = await Product.findByIdAndUpdate(
       req.params.id,
-      { ...req.body, updatedAt: Date.now() },
+      req.body,
       { new: true, runValidators: true }
     );
-    
+
     if (!product) {
       return res.status(404).json({ error: "Product not found" });
     }
-    
+
     res.json(product);
   } catch (error) {
+    console.error("Update product error:", error);
     res.status(400).json({ error: error.message });
   }
 };
@@ -58,27 +79,31 @@ export const updateProduct = async (req, res) => {
 // Delete product
 export const deleteProduct = async (req, res) => {
   try {
-    const product = await Product.findByIdAndDelete(req.params.id);
-    
+    const product = await Product.findById(req.params.id);
+
     if (!product) {
       return res.status(404).json({ error: "Product not found" });
     }
 
-    // Delete associated images from filesystem
+    // Delete associated images
     if (product.images && product.images.length > 0) {
-      product.images.forEach((img) => {
-        const imgPath = `./public${img}`;
-        if (fs.existsSync(imgPath)) {
-          fs.unlinkSync(imgPath);
+      product.images.forEach((imagePath) => {
+        const fullPath = path.join(__dirname, "../../public", imagePath);
+        if (fs.existsSync(fullPath)) {
+          fs.unlinkSync(fullPath);
         }
       });
     }
 
-    // Optionally delete stock movements
+    // Delete stock movements
     await StockMovement.deleteMany({ product: req.params.id });
 
-    res.json({ message: "Product deleted successfully", product });
+    // Delete product
+    await Product.findByIdAndDelete(req.params.id);
+
+    res.json({ message: "Product deleted successfully" });
   } catch (error) {
+    console.error("Delete product error:", error);
     res.status(500).json({ error: error.message });
   }
 };
@@ -87,108 +112,97 @@ export const deleteProduct = async (req, res) => {
 export const duplicateProduct = async (req, res) => {
   try {
     const original = await Product.findById(req.params.id);
-    
+
     if (!original) {
       return res.status(404).json({ error: "Product not found" });
     }
 
+    // Create duplicate with modified SKU and zero quantity
     const duplicate = new Product({
+      ...original.toObject(),
+      _id: undefined,
       name: `${original.name} (Copy)`,
       sku: `${original.sku}-COPY-${Date.now()}`,
-      description: original.description,
-      category: original.category,
-      tags: original.tags,
-      quantity: 0, // Start with 0 quantity
-      lowStockThreshold: original.lowStockThreshold,
-      unit: original.unit,
-      costPrice: original.costPrice,
-      sellingPrice: original.sellingPrice,
-      hasVariants: original.hasVariants,
-      variants: original.variants,
-      // Don't copy images and barcode
+      quantity: 0,
       images: [],
-      primaryImage: "",
-      barcode: "",
+      primaryImage: null,
+      createdAt: undefined,
+      updatedAt: undefined,
     });
 
     await duplicate.save();
-    res.json(duplicate);
+    res.status(201).json(duplicate);
   } catch (error) {
-    res.status(400).json({ error: error.message });
+    console.error("Duplicate product error:", error);
+    res.status(500).json({ error: error.message });
   }
 };
 
-// Upload product images
-// Upload product images
+// Upload images
 export const uploadImages = async (req, res) => {
   try {
-    console.log("📸 Upload handler called");
-    console.log("Product ID:", req.params.id);
+    console.log("Upload images request received");
     console.log("Files:", req.files);
+    console.log("Product ID:", req.params.id);
 
     if (!req.files || req.files.length === 0) {
       return res.status(400).json({ error: "No files uploaded" });
     }
 
     const product = await Product.findById(req.params.id);
-
     if (!product) {
-      // Delete uploaded files if product not found
-      req.files.forEach((file) => {
-        if (fs.existsSync(file.path)) {
-          fs.unlinkSync(file.path);
-        }
-      });
       return res.status(404).json({ error: "Product not found" });
     }
 
-    const imageUrls = req.files.map((file) => `/uploads/${file.filename}`);
-    console.log("✅ Image URLs:", imageUrls);
-
-    product.images.push(...imageUrls);
+    // Add new image paths
+    const newImages = req.files.map((file) => `/uploads/${file.filename}`);
+    product.images = [...(product.images || []), ...newImages];
 
     // Set first image as primary if no primary image exists
-    if (!product.primaryImage && imageUrls.length > 0) {
-      product.primaryImage = imageUrls[0];
+    if (!product.primaryImage && newImages.length > 0) {
+      product.primaryImage = newImages[0];
     }
 
     await product.save();
-    console.log("Product updated with images");
+    console.log("Product updated with images:", product);
 
     res.json(product);
   } catch (error) {
-    console.error("Error uploading images:", error);
-    res.status(400).json({ error: error.message });
+    console.error("Upload images error:", error);
+    res.status(500).json({ error: error.message });
   }
 };
 
-// Delete product image
+// Delete image
 export const deleteImage = async (req, res) => {
   try {
     const product = await Product.findById(req.params.id);
-    
+
     if (!product) {
       return res.status(404).json({ error: "Product not found" });
     }
 
     const imageUrl = decodeURIComponent(req.params.imageUrl);
-    product.images = product.images.filter((img) => img !== imageUrl);
+    const imagePath = path.join(__dirname, "../../public", imageUrl);
 
     // Delete file from filesystem
-    const imgPath = `./public${imageUrl}`;
-    if (fs.existsSync(imgPath)) {
-      fs.unlinkSync(imgPath);
+    if (fs.existsSync(imagePath)) {
+      fs.unlinkSync(imagePath);
     }
+
+    // Remove from product images array
+    product.images = product.images.filter((img) => img !== imageUrl);
 
     // Update primary image if deleted
     if (product.primaryImage === imageUrl) {
-      product.primaryImage = product.images[0] || "";
+      product.primaryImage = product.images.length > 0 ? product.images[0] : null;
     }
 
     await product.save();
     res.json(product);
   } catch (error) {
-    res.status(400).json({ error: error.message });
+    console.error("Delete image error:", error);
+    res.status(500).json({ error: error.message });
   }
 };
 
@@ -196,72 +210,19 @@ export const deleteImage = async (req, res) => {
 export const generateBarcode = async (req, res) => {
   try {
     const product = await Product.findById(req.params.id);
-    
+
     if (!product) {
       return res.status(404).json({ error: "Product not found" });
     }
 
-    // Generate barcode (simple version - you can use libraries like 'bwip-js' for actual barcode generation)
-    const timestamp = Date.now();
-    const random = Math.floor(Math.random() * 1000);
-    const barcode = `${product.sku}-${timestamp}${random}`;
-    
+    // Generate simple barcode (you can integrate a barcode library here)
+    const barcode = `BAR${Date.now()}${Math.floor(Math.random() * 1000)}`;
     product.barcode = barcode;
+
     await product.save();
-    
     res.json(product);
   } catch (error) {
-    res.status(400).json({ error: error.message });
-  }
-};
-
-// Update stock
-export const updateStock = async (req, res) => {
-  try {
-    const { productId, type, quantity, note } = req.body;
-
-    const product = await Product.findById(productId);
-    if (!product) {
-      return res.status(404).json({ error: "Product not found" });
-    }
-
-    // Update quantity
-    if (type === "IN") {
-      product.quantity += quantity;
-    } else if (type === "OUT") {
-      if (product.quantity < quantity) {
-        return res.status(400).json({ error: "Insufficient stock" });
-      }
-      product.quantity -= quantity;
-      product.lastSoldAt = new Date();
-    }
-
-    await product.save();
-
-    // Create stock movement record
-    const movement = new StockMovement({
-      product: productId,
-      type,
-      quantity,
-      note,
-    });
-    await movement.save();
-
-    res.json({ product, movement });
-  } catch (error) {
-    res.status(400).json({ error: error.message });
-  }
-};
-
-// Get stock history
-export const getStockHistory = async (req, res) => {
-  try {
-    const history = await StockMovement.find({
-      product: req.params.productId,
-    }).sort({ createdAt: -1 });
-
-    res.json(history);
-  } catch (error) {
+    console.error("Generate barcode error:", error);
     res.status(500).json({ error: error.message });
   }
 };
@@ -272,14 +233,27 @@ export const getDashboard = async (req, res) => {
     const totalProducts = await Product.countDocuments();
     const lowStockProducts = await Product.countDocuments({
       $expr: { $lt: ["$quantity", "$lowStockThreshold"] },
+      quantity: { $gt: 0 },
     });
     const outOfStockProducts = await Product.countDocuments({ quantity: 0 });
+    const inStockProducts = totalProducts - lowStockProducts - outOfStockProducts;
 
     const products = await Product.find();
+
+    // Calculate total inventory value
     const totalValue = products.reduce(
       (sum, p) => sum + p.quantity * (p.costPrice || 0),
       0
     );
+
+    // Calculate potential revenue
+    const potentialRevenue = products.reduce(
+      (sum, p) => sum + p.quantity * (p.sellingPrice || 0),
+      0
+    );
+
+    // Calculate total profit margin
+    const totalProfit = potentialRevenue - totalValue;
 
     // Recent stock movements
     const recentMovements = await StockMovement.find()
@@ -287,14 +261,278 @@ export const getDashboard = async (req, res) => {
       .sort({ createdAt: -1 })
       .limit(10);
 
+    // Stock movements by month (last 6 months)
+    const sixMonthsAgo = new Date();
+    sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+
+    const monthlyMovements = await StockMovement.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: sixMonthsAgo },
+        },
+      },
+      {
+        $group: {
+          _id: {
+            year: { $year: "$createdAt" },
+            month: { $month: "$createdAt" },
+            type: "$type",
+          },
+          totalQuantity: { $sum: "$quantity" },
+          count: { $sum: 1 },
+        },
+      },
+      {
+        $sort: { "_id.year": 1, "_id.month": 1 },
+      },
+    ]);
+
+    // Stock by category
+    const categoryStats = await Product.aggregate([
+      {
+        $group: {
+          _id: "$category",
+          totalProducts: { $sum: 1 },
+          totalQuantity: { $sum: "$quantity" },
+          totalValue: {
+            $sum: {
+              $multiply: ["$quantity", { $ifNull: ["$costPrice", 0] }],
+            },
+          },
+        },
+      },
+      {
+        $sort: { totalValue: -1 },
+      },
+    ]);
+
+    // Low stock products
+    const lowStockList = await Product.find({
+      $expr: { $lt: ["$quantity", "$lowStockThreshold"] },
+      quantity: { $gt: 0 },
+    })
+      .select("name sku quantity lowStockThreshold category")
+      .sort({ quantity: 1 })
+      .limit(10);
+
+    // Out of stock products
+    const outOfStockList = await Product.find({ quantity: 0 })
+      .select("name sku category")
+      .sort({ createdAt: -1 })
+      .limit(10);
+
     res.json({
       totalProducts,
+      inStockProducts,
       lowStockProducts,
       outOfStockProducts,
       totalValue,
+      potentialRevenue,
+      totalProfit,
       recentMovements,
+      monthlyMovements,
+      categoryStats,
+      lowStockList,
+      outOfStockList,
     });
   } catch (error) {
+    console.error("Dashboard error:", error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// Low Stock Report
+export const getLowStockReport = async (req, res) => {
+  try {
+    const lowStockProducts = await Product.find({
+      $expr: { $lt: ["$quantity", "$lowStockThreshold"] },
+    })
+      .select("name sku quantity lowStockThreshold category costPrice sellingPrice")
+      .sort({ quantity: 1 });
+
+    const totalValue = lowStockProducts.reduce(
+      (sum, p) => sum + p.quantity * (p.costPrice || 0),
+      0
+    );
+
+    res.json({
+      products: lowStockProducts,
+      totalProducts: lowStockProducts.length,
+      totalValue,
+    });
+  } catch (error) {
+    console.error("Low stock report error:", error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// Stock Value Report
+export const getStockValueReport = async (req, res) => {
+  try {
+    const products = await Product.find()
+      .select("name sku quantity category costPrice sellingPrice")
+      .sort({ category: 1, name: 1 });
+
+    const totalCostValue = products.reduce(
+      (sum, p) => sum + p.quantity * (p.costPrice || 0),
+      0
+    );
+
+    const totalSellingValue = products.reduce(
+      (sum, p) => sum + p.quantity * (p.sellingPrice || 0),
+      0
+    );
+
+    const byCategory = await Product.aggregate([
+      {
+        $group: {
+          _id: "$category",
+          totalProducts: { $sum: 1 },
+          totalQuantity: { $sum: "$quantity" },
+          totalCostValue: {
+            $sum: { $multiply: ["$quantity", { $ifNull: ["$costPrice", 0] }] },
+          },
+          totalSellingValue: {
+            $sum: { $multiply: ["$quantity", { $ifNull: ["$sellingPrice", 0] }] },
+          },
+        },
+      },
+      {
+        $sort: { totalCostValue: -1 },
+      },
+    ]);
+
+    res.json({
+      products,
+      totalProducts: products.length,
+      totalCostValue,
+      totalSellingValue,
+      potentialProfit: totalSellingValue - totalCostValue,
+      byCategory,
+    });
+  } catch (error) {
+    console.error("Stock value report error:", error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// Stock Movements Report
+export const getStockMovementsReport = async (req, res) => {
+  try {
+    const { startDate, endDate, type } = req.query;
+
+    const query = {};
+    if (startDate || endDate) {
+      query.createdAt = {};
+      if (startDate) query.createdAt.$gte = new Date(startDate);
+      if (endDate) query.createdAt.$lte = new Date(endDate);
+    }
+    if (type) query.type = type;
+
+    const movements = await StockMovement.find(query)
+      .populate("product", "name sku category")
+      .sort({ createdAt: -1 });
+
+    const totalIn = movements
+      .filter((m) => m.type === "IN")
+      .reduce((sum, m) => sum + m.quantity, 0);
+
+    const totalOut = movements
+      .filter((m) => m.type === "OUT")
+      .reduce((sum, m) => sum + m.quantity, 0);
+
+    res.json({
+      movements,
+      totalMovements: movements.length,
+      totalIn,
+      totalOut,
+      netChange: totalIn - totalOut,
+    });
+  } catch (error) {
+    console.error("Stock movements report error:", error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// Export to CSV
+export const exportToCSV = async (req, res) => {
+  try {
+    const { type } = req.query;
+
+    let csv = "";
+    let filename = "inventory-export.csv";
+
+    if (type === "products") {
+      const products = await Product.find();
+      filename = "products-export.csv";
+
+      csv = "Name,SKU,Category,Quantity,Unit,Cost Price,Selling Price,Low Stock Threshold,Status\n";
+
+      products.forEach((p) => {
+        const status =
+          p.quantity === 0
+            ? "Out of Stock"
+            : p.quantity < p.lowStockThreshold
+            ? "Low Stock"
+            : "In Stock";
+        csv += `"${p.name}","${p.sku}","${p.category || ""}",${p.quantity},"${
+          p.unit || "pieces"
+        }",${p.costPrice || 0},${p.sellingPrice || 0},${p.lowStockThreshold},"${status}"\n`;
+      });
+    } else if (type === "movements") {
+      const movements = await StockMovement.find()
+        .populate("product", "name sku")
+        .sort({ createdAt: -1 });
+      filename = "stock-movements-export.csv";
+
+      csv = "Date,Product,SKU,Type,Quantity,Note\n";
+
+      movements.forEach((m) => {
+        const date = new Date(m.createdAt).toLocaleString();
+        csv += `"${date}","${m.product?.name || "N/A"}","${
+          m.product?.sku || "N/A"
+        }","${m.type}",${m.quantity},"${m.note || ""}"\n`;
+      });
+    } else if (type === "low-stock") {
+      const products = await Product.find({
+        $expr: { $lt: ["$quantity", "$lowStockThreshold"] },
+      }).sort({ quantity: 1 });
+      filename = "low-stock-export.csv";
+
+      csv = "Name,SKU,Category,Current Stock,Threshold,Needed,Cost Price,Selling Price\n";
+
+      products.forEach((p) => {
+        const needed = p.lowStockThreshold - p.quantity;
+        csv += `"${p.name}","${p.sku}","${p.category || ""}",${p.quantity},${
+          p.lowStockThreshold
+        },${needed},${p.costPrice || 0},${p.sellingPrice || 0}\n`;
+      });
+    } else if (type === "stock-value") {
+      const products = await Product.find().sort({ category: 1, name: 1 });
+      filename = "stock-value-export.csv";
+
+      csv =
+        "Name,SKU,Category,Quantity,Cost Price,Selling Price,Total Cost Value,Total Selling Value,Profit\n";
+
+      products.forEach((p) => {
+        const totalCost = p.quantity * (p.costPrice || 0);
+        const totalSelling = p.quantity * (p.sellingPrice || 0);
+        const profit = totalSelling - totalCost;
+        csv += `"${p.name}","${p.sku}","${p.category || ""}",${p.quantity},${
+          p.costPrice || 0
+        },${p.sellingPrice || 0},${totalCost.toFixed(2)},${totalSelling.toFixed(
+          2
+        )},${profit.toFixed(2)}\n`;
+      });
+    } else {
+      return res.status(400).json({ error: "Invalid export type" });
+    }
+
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.send(csv);
+  } catch (error) {
+    console.error("Export error:", error);
     res.status(500).json({ error: error.message });
   }
 };
