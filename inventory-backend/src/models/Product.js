@@ -1,79 +1,79 @@
 import mongoose from "mongoose";
 
-const productVariantSchema = new mongoose.Schema({
-  name: { type: String, required: true },
-  value: { type: String, required: true },
-  sku: { type: String },
-  price: { type: Number, default: 0 },
-  quantity: { type: Number, default: 0 },
+const variantSchema = new mongoose.Schema({
+  name: String,
+  value: String,
+  sku: String,
+  price: Number,
+  quantity: Number,
 });
 
 const productSchema = new mongoose.Schema(
   {
-    // Basic Information
     name: { type: String, required: true },
-    sku: { type: String, required: true, unique: true }, // unique: true creates an index
-    description: { type: String, default: "" },
-    
-    // Categorization
-    category: { type: String, default: "" },
-    tags: [{ type: String }],
-    
-    // Inventory
+    sku: { type: String, required: true, unique: true },
+    description: String,
+    category: String,
+    tags: [String],
     quantity: { type: Number, default: 0 },
     lowStockThreshold: { type: Number, default: 10 },
-    unit: { 
-      type: String, 
+    unit: {
+      type: String,
+      enum: ["pieces", "kg", "grams", "liters", "ml", "boxes", "packs"],
       default: "pieces",
-      enum: ["pieces", "kg", "grams", "liters", "ml", "boxes", "packs"]
     },
-    
-    // Pricing
-    costPrice: { type: Number, default: 0 },
-    sellingPrice: { type: Number, default: 0 },
-    
-    // Images
-    images: [{ type: String }],
-    primaryImage: { type: String, default: "" },
-    
-    // Barcode
-    barcode: { type: String, default: "" },
-    
-    // Variants
+    costPrice: Number,
+    sellingPrice: Number,
+    images: [String],
+    primaryImage: String,
+    barcode: String,
     hasVariants: { type: Boolean, default: false },
-    variants: [productVariantSchema],
+    variants: [variantSchema],
     
-    // Tracking
-    lastSoldAt: { type: Date },
+    // NEW: Expiry and Notification Fields
+    isPerishable: { type: Boolean, default: false },
+    expiryDate: Date,
+    expiryAlertDays: { type: Number, default: 7 }, // Alert X days before expiry
+    lastStockAlert: Date,
+    lastExpiryAlert: Date,
+    autoReorderEnabled: { type: Boolean, default: false },
+    reorderPoint: Number,
+    reorderQuantity: Number,
   },
-  { 
-    timestamps: true
+  {
+    timestamps: true,
   }
 );
 
-// Remove duplicate indexes - only add indexes that aren't already created by schema options
-productSchema.index({ category: 1 });
-productSchema.index({ tags: 1 });
-productSchema.index({ barcode: 1 });
-// DON'T add: productSchema.index({ sku: 1 }); - already indexed by unique: true
-
-// Virtual field for profit margin
-productSchema.virtual('profitMargin').get(function() {
-  if (this.costPrice > 0 && this.sellingPrice > 0) {
-    return ((this.sellingPrice - this.costPrice) / this.costPrice) * 100;
-  }
-  return 0;
+// Virtual for profit margin
+productSchema.virtual("profitMargin").get(function () {
+  if (!this.costPrice || !this.sellingPrice) return 0;
+  return ((this.sellingPrice - this.costPrice) / this.costPrice) * 100;
 });
 
-// Virtual field for stock status
-productSchema.virtual('stockStatus').get(function() {
-  if (this.quantity === 0) return 'OUT_OF_STOCK';
-  if (this.quantity < this.lowStockThreshold) return 'LOW_STOCK';
-  return 'IN_STOCK';
+// Virtual for stock status
+productSchema.virtual("stockStatus").get(function () {
+  if (this.quantity === 0) return "out_of_stock";
+  if (this.quantity < this.lowStockThreshold) return "low_stock";
+  return "in_stock";
 });
 
-// Include virtuals when converting to JSON
-productSchema.set('toJSON', { virtuals: true });
-productSchema.set('toObject', { virtuals: true });
+// Virtual for expiry status
+productSchema.virtual("expiryStatus").get(function () {
+  if (!this.isPerishable || !this.expiryDate) return "not_applicable";
+  
+  const now = new Date();
+  const expiryDate = new Date(this.expiryDate);
+  const daysUntilExpiry = Math.ceil((expiryDate - now) / (1000 * 60 * 60 * 24));
+  
+  if (daysUntilExpiry < 0) return "expired";
+  if (daysUntilExpiry <= this.expiryAlertDays) return "expiring_soon";
+  return "fresh";
+});
 
-export default mongoose.model("Product", productSchema);
+productSchema.set("toJSON", { virtuals: true });
+productSchema.set("toObject", { virtuals: true });
+
+const Product = mongoose.model("Product", productSchema);
+
+export default Product;
