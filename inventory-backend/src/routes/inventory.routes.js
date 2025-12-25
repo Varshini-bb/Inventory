@@ -15,6 +15,7 @@ import {
   getStockMovementsReport,
   exportToCSV,
 } from "../controllers/inventory.controller.js";
+import notificationRoutes from "./notification.routes.js";
 import multer from "multer";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -50,7 +51,7 @@ const fileFilter = (req, file, cb) => {
 
 const upload = multer({
   storage,
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+  limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter,
 });
 
@@ -75,5 +76,8 @@ router.post("/products/:id/duplicate", duplicateProduct);
 router.post("/products/:id/images", upload.array("images", 5), uploadImages);
 router.delete("/products/:id/images/:imageUrl", deleteImage);
 router.post("/products/:id/generate-barcode", generateBarcode);
+
+// Notifications routes
+router.use("/", notificationRoutes);
 
 export default router;
