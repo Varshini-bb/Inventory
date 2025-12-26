@@ -227,113 +227,52 @@ export const generateBarcode = async (req, res) => {
   }
 };
 
-// Get dashboard stats
+
+
 export const getDashboard = async (req, res) => {
   try {
+    // Get total products count
     const totalProducts = await Product.countDocuments();
-    const lowStockProducts = await Product.countDocuments({
-      $expr: { $lt: ["$quantity", "$lowStockThreshold"] },
-      quantity: { $gt: 0 },
-    });
-    const outOfStockProducts = await Product.countDocuments({ quantity: 0 });
-    const inStockProducts = totalProducts - lowStockProducts - outOfStockProducts;
 
+    // Get low stock products
+    const lowStockProducts = await Product.find({
+      $expr: { $lte: ["$quantity", "$lowStockThreshold"] },
+    }).countDocuments();
+
+    // Get out of stock products
+    const outOfStockProducts = await Product.find({
+      quantity: 0,
+    }).countDocuments();
+
+    // Calculate total stock value
     const products = await Product.find();
+    const totalStockValue = products.reduce((sum, product) => {
+      return sum + (product.quantity * (product.sellingPrice || 0));
+    }, 0);
 
-    // Calculate total inventory value
-    const totalValue = products.reduce(
-      (sum, p) => sum + p.quantity * (p.costPrice || 0),
-      0
-    );
-
-    // Calculate potential revenue
-    const potentialRevenue = products.reduce(
-      (sum, p) => sum + p.quantity * (p.sellingPrice || 0),
-      0
-    );
-
-    // Calculate total profit margin
-    const totalProfit = potentialRevenue - totalValue;
-
-    // Recent stock movements
+    // Get recent stock movements
     const recentMovements = await StockMovement.find()
       .populate("product", "name sku")
       .sort({ createdAt: -1 })
       .limit(10);
 
-    // Stock movements by month (last 6 months)
-    const sixMonthsAgo = new Date();
-    sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
-
-    const monthlyMovements = await StockMovement.aggregate([
-      {
-        $match: {
-          createdAt: { $gte: sixMonthsAgo },
-        },
-      },
-      {
-        $group: {
-          _id: {
-            year: { $year: "$createdAt" },
-            month: { $month: "$createdAt" },
-            type: "$type",
-          },
-          totalQuantity: { $sum: "$quantity" },
-          count: { $sum: 1 },
-        },
-      },
-      {
-        $sort: { "_id.year": 1, "_id.month": 1 },
-      },
-    ]);
-
-    // Stock by category
-    const categoryStats = await Product.aggregate([
+    // Get products by category
+    const productsByCategory = await Product.aggregate([
       {
         $group: {
           _id: "$category",
-          totalProducts: { $sum: 1 },
-          totalQuantity: { $sum: "$quantity" },
-          totalValue: {
-            $sum: {
-              $multiply: ["$quantity", { $ifNull: ["$costPrice", 0] }],
-            },
-          },
+          count: { $sum: 1 },
         },
-      },
-      {
-        $sort: { totalValue: -1 },
       },
     ]);
 
-    // Low stock products
-    const lowStockList = await Product.find({
-      $expr: { $lt: ["$quantity", "$lowStockThreshold"] },
-      quantity: { $gt: 0 },
-    })
-      .select("name sku quantity lowStockThreshold category")
-      .sort({ quantity: 1 })
-      .limit(10);
-
-    // Out of stock products
-    const outOfStockList = await Product.find({ quantity: 0 })
-      .select("name sku category")
-      .sort({ createdAt: -1 })
-      .limit(10);
-
     res.json({
       totalProducts,
-      inStockProducts,
       lowStockProducts,
       outOfStockProducts,
-      totalValue,
-      potentialRevenue,
-      totalProfit,
+      totalStockValue,
       recentMovements,
-      monthlyMovements,
-      categoryStats,
-      lowStockList,
-      outOfStockList,
+      productsByCategory,
     });
   } catch (error) {
     console.error("Dashboard error:", error);

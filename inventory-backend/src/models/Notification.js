@@ -4,7 +4,15 @@ const notificationSchema = new mongoose.Schema(
   {
     type: {
       type: String,
-      enum: ["low_stock", "out_of_stock", "expiry", "reorder"],
+      enum: ["LOW_STOCK", "EXPIRY_ALERT", "REORDER_REMINDER", "STOCK_OUT"],
+      required: true,
+    },
+    title: {
+      type: String,
+      required: true,
+    },
+    message: {
+      type: String,
       required: true,
     },
     product: {
@@ -12,23 +20,33 @@ const notificationSchema = new mongoose.Schema(
       ref: "Product",
       required: true,
     },
-    title: { type: String, required: true },
-    message: { type: String, required: true },
     priority: {
       type: String,
-      enum: ["low", "medium", "high", "critical"],
+      enum: ["low", "medium", "high", "urgent"],
       default: "medium",
     },
-    read: { type: Boolean, default: false },
-    dismissed: { type: Boolean, default: false },
-    emailSent: { type: Boolean, default: false },
-    data: mongoose.Schema.Types.Mixed, // Additional data
+    isRead: {
+      type: Boolean,
+      default: false,
+    },
+    isEmailSent: {
+      type: Boolean,
+      default: false,
+    },
+    isPushSent: {
+      type: Boolean,
+      default: false,
+    },
+    metadata: {
+      currentStock: Number,
+      threshold: Number,
+      expiryDate: Date,
+      daysUntilExpiry: Number,
+      reorderPoint: Number,
+      suggestedQuantity: Number,
+    },
   },
-  {
-    timestamps: true,
-  }
+  { timestamps: true }
 );
 
-const Notification = mongoose.model("Notification", notificationSchema);
-
-export default Notification;
+export default mongoose.model("Notification", notificationSchema);
