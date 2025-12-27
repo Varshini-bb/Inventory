@@ -4,7 +4,7 @@ import {
   sendLowStockEmail,
   sendExpiryAlertEmail,
   sendReorderReminderEmail,
-} from "../services/email.service.js";
+} from "../services/email.Service.js";
 import {
   sendLowStockPush,
   sendExpiryAlertPush,

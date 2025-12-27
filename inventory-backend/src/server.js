@@ -8,7 +8,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import inventoryRoutes from "./routes/inventory.routes.js";
 import { startScheduledTasks } from "./services/scheduler.service.js";
-import { initializeEmailService } from "./services/email.service.js";
+import { initializeEmailService } from "./services/email.Service.js";
 import { initializePushService } from "./services/push.service.js";
 
 const __filename = fileURLToPath(import.meta.url);
