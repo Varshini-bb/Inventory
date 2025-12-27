@@ -1,36 +1,23 @@
 import Notification from "../models/Notification.js";
 import Product from "../models/Product.js";
-import {
-  sendLowStockEmail,
-  sendExpiryAlertEmail,
-  sendReorderReminderEmail,
-} from "../services/email.Service.js";
-import {
-  sendLowStockPush,
-  sendExpiryAlertPush,
-  saveSubscription,
-} from "../services/push.service.js";
+import { sendLowStockEmail, sendExpiryAlertEmail, sendReorderReminderEmail } from "../services/email.Service.js";
+import { sendLowStockPush, sendExpiryAlertPush, saveSubscription } from "../services/push.service.js";
 
 export const getNotifications = async (req, res) => {
   try {
     const { isRead, type, priority } = req.query;
-
     const filter = {};
+
     if (isRead !== undefined) filter.isRead = isRead === "true";
     if (type) filter.type = type;
     if (priority) filter.priority = priority;
 
-    const notifications = await Notification.find(filter)
-      .populate("product")
-      .sort({ createdAt: -1 })
-      .limit(100);
+    const [notifications, unreadCount] = await Promise.all([
+      Notification.find(filter).populate("product").sort({ createdAt: -1 }).limit(100),
+      Notification.countDocuments({ isRead: false })
+    ]);
 
-    const unreadCount = await Notification.countDocuments({ isRead: false });
-
-    res.json({
-      notifications,
-      unreadCount,
-    });
+    res.json({ notifications, unreadCount });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -39,16 +26,13 @@ export const getNotifications = async (req, res) => {
 export const markAsRead = async (req, res) => {
   try {
     const { id } = req.params;
-
     const notification = await Notification.findByIdAndUpdate(
       id,
       { isRead: true },
       { new: true }
     );
 
-    if (!notification) {
-      return res.status(404).json({ error: "Notification not found" });
-    }
+    if (!notification) return res.status(404).json({ error: "Notification not found" });
 
     res.json(notification);
   } catch (error) {
